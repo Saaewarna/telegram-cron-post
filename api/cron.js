@@ -39,7 +39,7 @@ export default async function handler(req, res) {
   const pool = sheetMsgs;
 
   // --- Pilih pesan: ROTASI tiap 15 menit, dan loop otomatis ---
-  const slot = Math.floor(Date.now() / (15 * 60 * 1000)); // 15 menit
+  const slot = Math.floor(Date.now() / (10 * 60 * 1000)); // 10 menit
   const offset = Number.isFinite(+OFFSET) ? ((+OFFSET % pool.length) + pool.length) % pool.length : 0;
 
   // Override via query (opsional)
