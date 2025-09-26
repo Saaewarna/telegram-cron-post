@@ -1,11 +1,12 @@
 // api/cron.js
 export default async function handler(req, res) {
   // --- AUTH: cron vercel / test manual / secret key ---
+// --- AUTH: cron vercel / test manual / secret key ---
   const allowed =
-    req.headers["x-vercel-cron"] === "1" ||
+    ("x-vercel-cron" in req.headers) || // cukup ada header nya aja
     req.query.test === "1" ||
     (process.env.SECRET_KEY && req.query.key === process.env.SECRET_KEY);
-
+  
   if (!allowed) return res.status(401).json({ ok: false, msg: "unauthorized" });
 
   const {
