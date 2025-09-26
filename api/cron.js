@@ -1,31 +1,36 @@
 // api/cron.js
 export default async function handler(req, res) {
-  // --- AUTH: cron vercel / test manual / secret key ---
-// --- AUTH: cron vercel / test manual / secret key ---
+  // ===== AUTH (robust) =====
+  const cronHeader = req.headers["x-vercel-cron"];
+  const ua = (req.headers["user-agent"] || "").toLowerCase();
+  const isVercelCron = typeof cronHeader !== "undefined" || ua.includes("vercel-cron");
+
   const allowed =
-    ("x-vercel-cron" in req.headers) || // cukup ada header nya aja
+    isVercelCron ||
     req.query.test === "1" ||
     (process.env.SECRET_KEY && req.query.key === process.env.SECRET_KEY);
-  
-  if (!allowed) return res.status(401).json({ ok: false, msg: "unauthorized" });
+
+  if (!allowed) {
+    return res.status(401).json({ ok: false, msg: "unauthorized" });
+  }
 
   const {
     TELEGRAM_TOKEN,
     TELEGRAM_CHAT_ID,
     SHEET_ID,
-    SHEET_GID = "0",   // tab pertama
-    OFFSET = "0",      // buat geser rotasi kalau perlu
+    SHEET_GID = "0", // tab pertama
+    OFFSET = "0",    // geser start rotasi kalau perlu
   } = process.env;
 
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID || !SHEET_ID) {
     return res.status(500).json({ ok: false, msg: "Missing env vars" });
   }
 
-  // --- Ambil kolom B dari Google Sheets (aman buat emoji/newline) ---
+  // ===== Fetch Google Sheets (kolom B) =====
   async function fetchSheetTexts(sheetId, gid = "0") {
     const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${gid}`;
     const raw = await fetch(url).then(r => r.text());
-    const json = JSON.parse(raw.slice(47, -2));
+    const json = JSON.parse(raw.slice(47, -2)); // strip bungkus gviz
     return (json.table.rows || [])
       .map(r => (r.c?.[1]?.v ?? "").toString().trim()) // kolom B = index 1
       .filter(Boolean);
@@ -33,17 +38,15 @@ export default async function handler(req, res) {
 
   const sheetMsgs = await fetchSheetTexts(SHEET_ID, SHEET_GID);
   if (!sheetMsgs.length) {
-    return res.status(500).json({ ok: false, msg: "Sheet kosong (kolom B)" });
+    return res.status(500).json({ ok: false, msg: "Sheet kosong (isi kolom B mulai baris 2)" });
   }
 
-  // --- Pool: pure from Sheets biar urutan rapi ---
+  // ===== Pilih pesan (rotasi 1 menit, loop forever) =====
   const pool = sheetMsgs;
-
-  // --- Pilih pesan: ROTASI tiap 1 menit, dan loop otomatis ---
-  const slot = Math.floor(Date.now() / (1 * 60 * 1000)); // 1 menit
+  const slot = Math.floor(Date.now() / (1 * 60 * 1000)); // 1 menit (untuk test)
   const offset = Number.isFinite(+OFFSET) ? ((+OFFSET % pool.length) + pool.length) % pool.length : 0;
 
-  // Override via query (opsional)
+  // override opsional buat testing
   const hasIndex = typeof req.query.index !== "undefined";
   const qIndex = hasIndex ? Math.max(0, Math.min(pool.length - 1, +req.query.index || 0)) : null;
   const qRandom = req.query.random === "1";
@@ -54,7 +57,7 @@ export default async function handler(req, res) {
 
   const pick = pool[idx];
 
-  // --- Split biar aman <4096 char (margin 3500) ---
+  // ===== Split biar aman dari limit 4096 char =====
   const splitMessage = (txt, limit = 3500) => {
     const parts = [];
     let s = txt;
@@ -68,12 +71,13 @@ export default async function handler(req, res) {
     return parts;
   };
 
+  // ===== Kirim ke Telegram =====
   const sendText = (text) =>
     fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,  // contoh: @warnatopup
+        chat_id: TELEGRAM_CHAT_ID, // ex: @warnatopup atau -100xxxx
         text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
@@ -84,9 +88,10 @@ export default async function handler(req, res) {
   const results = [];
   for (const c of chunks) {
     results.push(await sendText(c));
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 250)); // jeda tipis
   }
 
+  // Debug view saat ?test=1
   if (req.query.test === "1") {
     return res.status(200).json({
       ok: true,
@@ -97,6 +102,8 @@ export default async function handler(req, res) {
       random: qRandom,
       forcedIndex: qIndex,
       results,
+      cronHeaderPresent: typeof cronHeader !== "undefined",
+      ua,
     });
   }
 
