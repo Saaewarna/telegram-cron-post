@@ -43,7 +43,7 @@ export default async function handler(req, res) {
 
   // ===== Pilih pesan (rotasi 1 menit, loop forever) =====
   const pool = sheetMsgs;
-  const slot = Math.floor(Date.now() / (10 * 60 * 1000)); // 1 menit (untuk test)
+  const slot = Math.floor(Date.now() / (30 * 60 * 1000)); // 1 menit (untuk test)
   const offset = Number.isFinite(+OFFSET) ? ((+OFFSET % pool.length) + pool.length) % pool.length : 0;
 
   // override opsional buat testing
